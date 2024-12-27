@@ -1,6 +1,13 @@
 import os, json, traceback, subprocess, sys
 from time import sleep
 from litellm import completion
+from dotenv import load_dotenv
+
+load_dotenv()
+
+LITELLM_MODEL = os.getenv('LITELLM_MODEL')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 
 # ANSI escape codes for color and formatting
 class Colors:
