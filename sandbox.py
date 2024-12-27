@@ -1,11 +1,13 @@
 import os
 import sys
-import uuid
+import json
 import traceback
-from typing import Optional, Dict, Any
-
+from time import sleep
 from daytona_sdk import Daytona, CreateWorkspaceParams, DaytonaConfig
 from dotenv import load_dotenv
+
+# Load environment variables from the user's environment
+load_dotenv()
 
 def comprehensive_error_logging(error: Exception, context: str = ""):
     """
@@ -17,213 +19,189 @@ def comprehensive_error_logging(error: Exception, context: str = ""):
     print("Detailed Traceback:")
     traceback.print_exc()
 
-def create_resilient_workspace(daytona_client):
-    """
-    Create a workspace with multiple resilience strategies.
-    """
-    workspace_creation_strategies = [
-        # Strategy 1: Create with explicit parameters
-        lambda: daytona_client.create(params=CreateWorkspaceParams(
-            language="python",
-            id=f"babyagi-{uuid.uuid4().hex[:8]}"
-        )),
-
-        # Strategy 2: Default creation
-        lambda: daytona_client.create(),
-
-        # Strategy 3: Try to get current workspace
-        lambda: daytona_client.get_current_workspace()
-            if os.getenv("DAYTONA_WORKSPACE_ID")
-            else None
-    ]
-
-    for i, strategy in enumerate(workspace_creation_strategies, 1):
-        try:
-            print(f"\n🔄 Attempting Workspace Creation Strategy {i}")
-            workspace = strategy()
-            if workspace:
-                print(f"✅ Workspace created successfully with Strategy {i}")
-                return workspace
-        except Exception as e:
-            print(f"❌ Strategy {i} failed: {e}")
-
-    return None
-
 def clone_repository_with_fallbacks(workspace):
     """
-    Clone repository with multiple path fallbacks.
-    """
-    potential_paths = [
-        "/tmp/babyagi"
-    ]
-
-    for path in potential_paths:
-        try:
-            print(f"🔄 Attempting to clone repository to {path}")
-
-            # Clean up any existing directory
-            workspace.process.exec(f"rm -rf {path}")
-            workspace.process.exec(f"mkdir -p {path}")
-
-            # Clone repository
-            clone_result = workspace.git.clone(
-                url="https://github.com/nkkko/babyagi-2o.git",
-                path=path
-            )
-
-            # Verify the clone and copy files if needed
-            print("📋 Copying current directory contents to workspace...")
-
-            # List current directory contents
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            files_to_copy = ['main.py', 'requirements.txt']
-
-            for file in files_to_copy:
-                try:
-                    with open(os.path.join(current_dir, file), 'rb') as f:
-                        content = f.read()
-                        workspace.fs.upload_file(f"{path}/{file}", content)
-                        print(f"✅ Uploaded {file}")
-                except Exception as e:
-                    print(f"⚠️ Error copying {file}: {e}")
-
-            # Verify the files exist
-            result = workspace.process.exec("ls -la", cwd=path)
-            if result and result.result:
-                print(f"📁 Directory contents of {path}:")
-                print(result.result)
-
-                # Check if main.py exists
-                check_main = workspace.process.exec(f"ls -l main.py", cwd=path)
-                if check_main and check_main.result:
-                    print(f"✅ Successfully set up workspace at {path}")
-                    return path
-                else:
-                    print(f"⚠️ main.py not found in {path}")
-                    continue
-
-        except Exception as setup_error:
-            print(f"❌ Setup failed for {path}: {setup_error}")
-            continue
-
-    raise RuntimeError("Could not set up workspace in any path")
-
-def setup_environment(workspace, babyagi_path, user_input):
-    """
-    Set up environment variables and .env file.
-    """
-    env_vars = {
-        "OBJECTIVE": user_input or "Solve a complex problem",
-        "LITELLM_MODEL": os.getenv("LITELLM_MODEL", ""),
-        "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", ""),
-        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY", ""),
-        "PYTHONUNBUFFERED": "1"  # Add this to ensure unbuffered output
-    }
-
-    # Filter out empty values and create .env content
-    filtered_env_vars = {k: v for k, v in env_vars.items() if v}
-    env_content = "\n".join([f"{key}={value}" for key, value in filtered_env_vars.items()])
-
-    # Create .env file
-    env_path = os.path.join(babyagi_path, ".env")
-    workspace.fs.upload_file(env_path, env_content.encode())
-    print(f"✅ .env file created at {env_path}")
-
-    return env_vars
-
-def install_dependencies(workspace, babyagi_path):
-    """
-    Install dependencies with multiple fallback strategies.
-    """
-    dependency_commands = [
-        "pip install -r requirements.txt",
-        "python -m pip install -r requirements.txt",
-        "pip3 install -r requirements.txt"
-    ]
-
-    for cmd in dependency_commands:
-        try:
-            print(f"🔧 Installing dependencies with: {cmd}")
-            result = workspace.process.exec(cmd, cwd=babyagi_path)
-            print(f"📦 Result: {result.result}")
-            return True
-        except Exception as e:
-            print(f"❌ Dependency installation failed: {e}")
-            continue
-
-    return False
-
-def run_babyagi(workspace, babyagi_path, user_input):
-    """
-    Run BabyAGI with output capture.
+    Clone repository by uploading necessary files directly.
     """
     try:
-        # Ensure babyagi_path is properly formatted and exists
-        print(f"\n🔍 Verifying workspace setup:")
-        ls_result = workspace.process.exec("ls -la", cwd=babyagi_path)
-        print("Directory contents:")
-        print(ls_result.result if ls_result and ls_result.result else "No files found")
+        workspace_dir = "/tmp/babyagi/workspace"
+        print(f"🔄 Setting up workspace in {workspace_dir}")
 
-        # Construct the correct path to main.py
-        main_script = os.path.join(babyagi_path, "main.py")
+        # Clean up any existing directory
+        workspace.process.exec(f"rm -rf {workspace_dir}")
 
-        # Verify main.py exists
-        print(f"\n🔍 Checking for main.py:")
-        check_main = workspace.process.exec(f"ls -l main.py", cwd=babyagi_path)
-        if not (check_main and check_main.result):
-            print("⚠️ main.py not found in workspace")
-            return None
+        # Create workspace directory
+        workspace.process.exec(f"mkdir -p {workspace_dir}")
 
-        # First attempt with relative path
-        run_command = f"python main.py \"{user_input}\""
-        print(f"\n🚀 Running BabyAGI with: {run_command}")
-        print(f"📂 Working directory: {babyagi_path}")
+        # Files to upload
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        files_to_copy = ['main.py', 'requirements.txt', 'get-pip.py']
 
-        result = workspace.process.exec(
-            command=run_command,
-            cwd=babyagi_path
-        )
+        for file in files_to_copy:
+            try:
+                file_path = os.path.join(current_dir, file)
+                with open(file_path, 'rb') as f:
+                    content = f.read()
+                workspace.fs.upload_file(f"{workspace_dir}/{file}", content)
+                print(f"✅ Uploaded {file} to {workspace_dir}/{file}")
 
+                # Verify file exists by listing
+                ls_result = workspace.process.exec(f"ls -la {workspace_dir}/{file}")
+                if ls_result and ls_result.result:
+                    print(f"📄 {file} exists and is {len(content)} bytes")
+                else:
+                    raise RuntimeError(f"{file} not found after upload")
+            except Exception as e:
+                print(f"⚠️ Error uploading {file}: {e}")
+                raise
+
+        print(f"✅ Successfully set up workspace at {workspace_dir}")
+        return workspace_dir
+
+    except Exception as setup_error:
+        print(f"❌ Workspace setup failed: {setup_error}")
+        traceback.print_exc()
+        raise RuntimeError(f"Could not set up workspace: {str(setup_error)}")
+
+def install_pip(workspace, workspace_dir):
+    """
+    Install pip using get-pip.py.
+    """
+    try:
+        print("\n🛠 Installing pip...")
+        get_pip_path = f"{workspace_dir}/get-pip.py"
+        install_pip_cmd = f"python3 {get_pip_path}"
+        result = workspace.process.exec(install_pip_cmd)
         if result and result.result:
+            print(f"📦 pip installation output:\n{result.result}")
+        else:
+            raise RuntimeError("pip installation failed without output")
+        return True
+    except Exception as e:
+        print(f"❌ pip installation failed: {e}")
+        traceback.print_exc()
+        return False
+
+def setup_virtualenv(workspace, workspace_dir):
+    """
+    Set up a Python virtual environment.
+    """
+    try:
+        print("\n🛠 Setting up virtual environment...")
+        venv_path = f"{workspace_dir}/venv"
+        create_venv_cmd = f"python3 -m venv {venv_path}"
+        result = workspace.process.exec(create_venv_cmd)
+        if result and result.result:
+            print(f"📦 Virtual environment setup output:\n{result.result}")
+
+        # Upgrade pip in the virtual environment
+        upgrade_pip_cmd = f"{venv_path}/bin/pip install --upgrade pip"
+        result = workspace.process.exec(upgrade_pip_cmd)
+        if result and result.result:
+            print(f"📦 pip upgrade output:\n{result.result}")
+
+        return venv_path
+    except Exception as e:
+        print(f"❌ Virtual environment setup failed: {e}")
+        traceback.print_exc()
+        return None
+
+def install_dependencies(workspace, venv_path, workspace_dir):
+    """
+    Install dependencies from requirements.txt within the virtual environment.
+    """
+    try:
+        print("\n📦 Installing dependencies...")
+        install_reqs_cmd = f"{venv_path}/bin/pip install -r {workspace_dir}/requirements.txt"
+        result = workspace.process.exec(install_reqs_cmd)
+        if result and result.result:
+            print(f"📦 Dependencies installation output:\n{result.result}")
+        else:
+            raise RuntimeError("Dependencies installation failed without output")
+
+        # Install additional packages if needed
+        additional_packages = ['litellm', 'python-dotenv', 'requests', 'anthropic', 'openai']
+        for package in additional_packages:
+            install_pkg_cmd = f"{venv_path}/bin/pip install {package}"
+            result = workspace.process.exec(install_pkg_cmd)
+            if result and result.result:
+                print(f"📦 Installed {package}:\n{result.result}")
+            else:
+                raise RuntimeError(f"Installation of {package} failed without output")
+
+        return True
+    except Exception as e:
+        print(f"❌ Dependencies installation failed: {e}")
+        traceback.print_exc()
+        return False
+
+def run_babyagi(workspace, venv_path, workspace_dir, user_input):
+    """
+    Run main.py within the virtual environment and capture output.
+    """
+    try:
+        print("\n🚀 Running BabyAGI...")
+        # Command to run main.py and redirect output to output.txt
+        run_cmd = f"{venv_path}/bin/python {workspace_dir}/main.py \"{user_input}\" > {workspace_dir}/output.txt 2>&1"
+        result = workspace.process.exec(run_cmd)
+        if result:
+            print("✅ BabyAGI execution command issued.")
+
+        # Wait for the script to finish
+        sleep(5)  # Adjust sleep time as needed
+
+        # Retrieve the output file
+        print("\n📥 Downloading BabyAGI output...")
+        output_content = workspace.fs.download_file(f"{workspace_dir}/output.txt")
+        if output_content:
+            output = output_content.decode('utf-8')
             print("\n=== BabyAGI Output ===")
-            print(result.result)
-            return result.result
-
-        # Second attempt with python -u
-        print("\n🔄 Retrying with unbuffered output...")
-        run_command = f"python -u main.py \"{user_input}\""
-        result = workspace.process.exec(
-            command=run_command,
-            cwd=babyagi_path
-        )
-
-        if result and result.result:
-            print("\n=== BabyAGI Output (Unbuffered) ===")
-            print(result.result)
-            return result.result
-
-        # Final attempt with absolute path
-        print("\n🔄 Retrying with absolute path...")
-        run_command = f"cd {babyagi_path} && python main.py \"{user_input}\""
-        result = workspace.process.exec(command=run_command)
-
-        if result and result.result:
-            print("\n=== BabyAGI Output (Absolute Path) ===")
-            print(result.result)
-            return result.result
-
-        print("\n⚠️ No output received from any attempt")
-
-        # Additional debugging information
-        print("\n📁 Final workspace check:")
-        workspace.process.exec("pwd", cwd=babyagi_path)
-        workspace.process.exec("ls -la", cwd=babyagi_path)
+            print(output)
+            return output
+        else:
+            raise RuntimeError("Failed to retrieve output.txt")
 
     except Exception as e:
-        print(f"❌ Execution failed: {e}")
+        print(f"❌ Running BabyAGI failed: {e}")
         traceback.print_exc()
+        return None
 
-    return None
+def setup_environment(workspace, workspace_dir, user_input):
+    """
+    Set up environment variables by creating a .env file.
+    """
+    try:
+        print("\n🔧 Setting up environment variables...")
+        env_vars = {
+            "OBJECTIVE": user_input or "Solve a complex problem",
+            "LITELLM_MODEL": os.getenv("LITELLM_MODEL", "gpt-4o-mini"),
+            "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", ""),
+            "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY", ""),
+            "PYTHONUNBUFFERED": "1",
+            "PYTHONPATH": f"{workspace_dir}/venv/lib/python3.11/site-packages",
+            "PATH": f"{workspace_dir}/venv/bin:$PATH"
+        }
+
+        env_content = "\n".join([f"{key}={value}" for key, value in env_vars.items() if value])
+        env_path = f"{workspace_dir}/.env"
+        workspace.fs.upload_file(env_path, env_content.encode())
+        print(f"✅ Created .env file at {env_path}")
+
+        # Verify .env file
+        verify_env_cmd = f"cat {env_path}"
+        result = workspace.process.exec(verify_env_cmd)
+        if result and result.result:
+            print("\n📄 .env file contents:")
+            print(result.result)
+        else:
+            raise RuntimeError("Failed to verify .env file")
+
+        return True
+
+    except Exception as e:
+        print(f"❌ Setting up environment variables failed: {e}")
+        traceback.print_exc()
+        return False
 
 def setup_babyagi_workspace(user_input: str):
     """
@@ -239,41 +217,43 @@ def setup_babyagi_workspace(user_input: str):
         daytona_client = Daytona(config=config)
 
         # Create workspace
-        workspace = create_resilient_workspace(daytona_client)
+        print("\n🔄 Attempting Workspace Creation Strategy 1")
+        workspace = daytona_client.create(params=CreateWorkspaceParams(
+            language="python",
+            id=f"babyagi-{uuid.uuid4().hex[:8]}"
+        ))
         if not workspace:
-            raise RuntimeError("Failed to create workspace")
+            raise RuntimeError("Failed to create workspace with Strategy 1")
+        print("✅ Workspace created successfully with Strategy 1")
 
-        try:
-            # Set up workspace
-            babyagi_path = clone_repository_with_fallbacks(workspace)
-            if not babyagi_path:
-                raise RuntimeError("Failed to set up workspace directory")
+        # Clone repository by uploading files
+        workspace_dir = clone_repository_with_fallbacks(workspace)
 
-            # Verify workspace setup
-            print("\n🔍 Verifying workspace setup:")
-            result = workspace.process.exec("ls -la", cwd=babyagi_path)
-            print(result.result if result and result.result else "No files found")
+        # Set up environment variables
+        if not setup_environment(workspace, workspace_dir, user_input):
+            raise RuntimeError("Failed to set up environment variables")
 
-            # Setup environment
-            setup_environment(workspace, babyagi_path, user_input)
+        # Install pip
+        if not install_pip(workspace, workspace_dir):
+            raise RuntimeError("Failed to install pip")
 
-            # Install dependencies
-            if not install_dependencies(workspace, babyagi_path):
-                raise RuntimeError("Failed to install dependencies")
+        # Set up virtual environment
+        venv_path = setup_virtualenv(workspace, workspace_dir)
+        if not venv_path:
+            raise RuntimeError("Failed to set up virtual environment")
 
-            # Run BabyAGI
-            result = run_babyagi(workspace, babyagi_path, user_input)
+        # Install dependencies
+        if not install_dependencies(workspace, venv_path, workspace_dir):
+            raise RuntimeError("Failed to install dependencies")
 
-            return {
-                "workspace": workspace,
-                "result": result,
-                "path": babyagi_path
-            }
+        # Run BabyAGI
+        output = run_babyagi(workspace, venv_path, workspace_dir, user_input)
 
-        except Exception as e:
-            print(f"❌ Error during workspace setup: {e}")
-            traceback.print_exc()
-            return None
+        return {
+            "workspace": workspace,
+            "result": output,
+            "path": workspace_dir
+        }
 
     except Exception as e:
         comprehensive_error_logging(e, "Workspace Setup")
@@ -286,7 +266,7 @@ def main():
     try:
         # Validate environment
         if not os.path.exists(".env"):
-            print("❌ Error: .env file not found")
+            print("❌ Error: .env file not found in the current directory")
             return
 
         # Load environment variables
@@ -310,7 +290,8 @@ def main():
             try:
                 # Cleanup
                 print("\n🧹 Cleaning up workspace...")
-                Daytona().remove(workspace)
+                daytona_client = Daytona().client  # Assuming Daytona can remove the workspace
+                daytona_client.remove(workspace)
                 print("✅ Task completed successfully!")
             except Exception as e:
                 print(f"❌ Cleanup failed: {e}")
