@@ -125,21 +125,21 @@ def install_dependencies(workspace, babyagi_path):
 
     return False
 
-def run_babyagi(workspace, babyagi_path):
+def run_babyagi(workspace, babyagi_path, user_input):
     """
-    Run BabyAGI with multiple execution strategies.
+    Run BabyAGI with multiple execution strategies and capture output.
     """
     run_commands = [
-        "python main.py",
-        "python3 main.py",
-        "python -m main"
+        f"python main.py \"{user_input}\""
     ]
 
     for cmd in run_commands:
         try:
             print(f"🚀 Running BabyAGI with: {cmd}")
             result = workspace.process.exec(cmd, cwd=babyagi_path)
-            return result.result
+            if result and result.result:
+                return result.result  # This contains the output from main.py
+            print(f"⚠️ No output received from command: {cmd}")
         except Exception as e:
             print(f"❌ Execution failed: {e}")
             continue
@@ -175,7 +175,7 @@ def setup_babyagi_workspace(user_input: str):
             raise RuntimeError("Failed to install dependencies")
 
         # Run BabyAGI
-        result = run_babyagi(workspace, babyagi_path)
+        result = run_babyagi(workspace, babyagi_path, user_input)
 
         return {
             "workspace": workspace,
@@ -208,6 +208,13 @@ def main():
 
         if result:
             workspace = result["workspace"]
+            output = result["result"]
+
+            # Display the output
+            if output:
+                print("\n🤖 BabyAGI Output:")
+                print(output)
+
             try:
                 # Cleanup
                 print("\n🧹 Cleaning up workspace...")
