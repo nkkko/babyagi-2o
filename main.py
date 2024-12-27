@@ -3,6 +3,9 @@ from time import sleep
 from litellm import completion
 from dotenv import load_dotenv
 
+import sys
+sys.stdout.reconfigure(line_buffering=True)
+
 load_dotenv()
 
 LITELLM_MODEL = os.getenv('LITELLM_MODEL')
@@ -109,6 +112,14 @@ register_tool("task_completed", task_completed, "Marks the current task as compl
 
 # Main loop to handle user input and LLM interaction
 def run_main_loop(user_input):
+    # Create a list to store all output
+    output_buffer = []
+
+    # Function to write to both buffer and print
+    def log(message):
+        output_buffer.append(message)
+        print(message)
+
     # Include available API keys in the system prompt
     if available_api_keys:
         api_keys_info = "Available API keys:\n" + "\n".join(f"- {key}" for key in available_api_keys) + "\n\n"
@@ -147,12 +158,12 @@ def run_main_loop(user_input):
     }, {"role": "user", "content": user_input}]
     iteration, max_iterations = 0, 50
     while iteration < max_iterations:
-        print(f"{Colors.HEADER}{Colors.BOLD}Iteration {iteration + 1} running...{Colors.ENDC}")
+        log(f"{Colors.HEADER}{Colors.BOLD}Iteration {iteration + 1} running...{Colors.ENDC}")
         try:
             response = completion(model=MODEL_NAME, messages=messages, tools=tools, tool_choice="auto")
             response_message = response.choices[0].message
             if response_message.content:
-                print(f"{Colors.OKCYAN}{Colors.BOLD}LLM Response:{Colors.ENDC}\n{response_message.content}\n")
+                log(f"{Colors.OKCYAN}{Colors.BOLD}LLM Response:{Colors.ENDC}\n{response_message.content}\n")
             messages.append(response_message)
             if response_message.tool_calls:
                 for tool_call in response_message.tool_calls:
@@ -167,25 +178,48 @@ def run_main_loop(user_input):
                         "content": serialized_tool_result
                     })
                 if 'task_completed' in [tc.function.name for tc in response_message.tool_calls]:
-                    print(f"{Colors.OKGREEN}{Colors.BOLD}Task completed.{Colors.ENDC}")
+                    log(f"{Colors.OKGREEN}{Colors.BOLD}Task completed.{Colors.ENDC}")
                     break
         except Exception as e:
-            print(f"{Colors.FAIL}{Colors.BOLD}Error:{Colors.ENDC} Error in main loop: {e}")
+            log(f"{Colors.FAIL}{Colors.BOLD}Error:{Colors.ENDC} Error in main loop: {e}")
             traceback.print_exc()
         iteration += 1
         sleep(2)
-    print(f"{Colors.WARNING}{Colors.BOLD}Max iterations reached or task completed.{Colors.ENDC}")
+    log(f"{Colors.WARNING}{Colors.BOLD}Max iterations reached or task completed.{Colors.ENDC}")
+
+    # Write all output to a file
+    # At the end of the function, write to a file
+    try:
+        with open('output.txt', 'w', encoding='utf-8') as f:
+            f.write("\n".join(output_buffer))
+    except Exception as e:
+        print(f"Error writing to output file: {e}")
+
+    # Return the buffer content directly
+    return "\n".join(output_buffer)
 
 if __name__ == "__main__":
-    # Check if a prompt was provided as a command-line argument
-    if len(sys.argv) < 2:
-        print(f"{Colors.FAIL}Error: Please provide a prompt as a command-line argument{Colors.ENDC}")
-        print(f"Usage: python {sys.argv[0]} \"your prompt here\"")
+    try:
+        if len(sys.argv) < 2:
+            print(f"{Colors.FAIL}Error: Please provide a prompt as a command-line argument{Colors.ENDC}")
+            print(f"Usage: python {sys.argv[0]} \"your prompt here\"")
+            sys.exit(1)
+
+        # Add explicit debugging output
+        print("Debug: Script started")
+        print(f"Debug: Arguments received: {sys.argv}")
+
+        prompt = " ".join(sys.argv[1:])
+        print(f"Debug: Processing prompt: {prompt}")
+
+        output = run_main_loop(prompt)
+        print("Debug: Main loop completed")
+        print(output)
+
+        print("Debug: Script completed")
+        sys.stdout.flush()  # Ensure all output is flushed
+
+    except Exception as e:
+        print(f"Debug: Error in main execution: {e}")
+        traceback.print_exc()
         sys.exit(1)
-
-    # Get the prompt from command-line arguments
-    # Join all arguments after the script name in case the prompt contains spaces
-    prompt = " ".join(sys.argv[1:])
-
-    # Run the main loop with the provided prompt
-    run_main_loop(prompt)

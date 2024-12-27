@@ -65,7 +65,7 @@ def clone_repository_with_fallbacks(workspace):
             print(f"🔄 Attempting to clone repository to {path}")
 
             # Ensure path exists
-            os.makedirs(path, exist_ok=True)
+            workspace.process.exec(f"mkdir -p {path}")
 
             # Clone repository
             workspace.git.clone(
@@ -73,8 +73,15 @@ def clone_repository_with_fallbacks(workspace):
                 path=path
             )
 
-            print(f"✅ Successfully cloned to {path}")
-            return path
+            # Verify the clone
+            result = workspace.process.exec("ls -la", cwd=path)
+            if result and result.result and "main.py" in result.result:
+                print(f"✅ Successfully cloned to {path}")
+                return path
+            else:
+                print(f"⚠️ Clone seemed successful but main.py not found in {path}")
+                continue
+
         except Exception as clone_error:
             print(f"❌ Clone failed to {path}: {clone_error}")
             continue
@@ -89,7 +96,8 @@ def setup_environment(workspace, babyagi_path, user_input):
         "OBJECTIVE": user_input or "Solve a complex problem",
         "LITELLM_MODEL": os.getenv("LITELLM_MODEL", ""),
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY", ""),
-        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY", "")
+        "ANTHROPIC_API_KEY": os.getenv("ANTHROPIC_API_KEY", ""),
+        "PYTHONUNBUFFERED": "1"  # Add this to ensure unbuffered output
     }
 
     # Filter out empty values and create .env content
@@ -127,22 +135,73 @@ def install_dependencies(workspace, babyagi_path):
 
 def run_babyagi(workspace, babyagi_path, user_input):
     """
-    Run BabyAGI with multiple execution strategies and capture output.
+    Run BabyAGI with output capture.
     """
-    run_commands = [
-        f"python main.py \"{user_input}\""
-    ]
+    try:
+        # Ensure babyagi_path is properly formatted and exists
+        print(f"\n🔍 Verifying workspace setup:")
+        ls_result = workspace.process.exec("ls -la", cwd=babyagi_path)
+        print("Directory contents:")
+        print(ls_result.result if ls_result and ls_result.result else "No files found")
 
-    for cmd in run_commands:
-        try:
-            print(f"🚀 Running BabyAGI with: {cmd}")
-            result = workspace.process.exec(cmd, cwd=babyagi_path)
-            if result and result.result:
-                return result.result  # This contains the output from main.py
-            print(f"⚠️ No output received from command: {cmd}")
-        except Exception as e:
-            print(f"❌ Execution failed: {e}")
-            continue
+        # Construct the correct path to main.py
+        main_script = os.path.join(babyagi_path, "main.py")
+
+        # Verify main.py exists
+        print(f"\n🔍 Checking for main.py:")
+        check_main = workspace.process.exec(f"ls -l main.py", cwd=babyagi_path)
+        if not (check_main and check_main.result):
+            print("⚠️ main.py not found in workspace")
+            return None
+
+        # First attempt with relative path
+        run_command = f"python main.py \"{user_input}\""
+        print(f"\n🚀 Running BabyAGI with: {run_command}")
+        print(f"📂 Working directory: {babyagi_path}")
+
+        result = workspace.process.exec(
+            command=run_command,
+            cwd=babyagi_path
+        )
+
+        if result and result.result:
+            print("\n=== BabyAGI Output ===")
+            print(result.result)
+            return result.result
+
+        # Second attempt with python -u
+        print("\n🔄 Retrying with unbuffered output...")
+        run_command = f"python -u main.py \"{user_input}\""
+        result = workspace.process.exec(
+            command=run_command,
+            cwd=babyagi_path
+        )
+
+        if result and result.result:
+            print("\n=== BabyAGI Output (Unbuffered) ===")
+            print(result.result)
+            return result.result
+
+        # Final attempt with absolute path
+        print("\n🔄 Retrying with absolute path...")
+        run_command = f"cd {babyagi_path} && python main.py \"{user_input}\""
+        result = workspace.process.exec(command=run_command)
+
+        if result and result.result:
+            print("\n=== BabyAGI Output (Absolute Path) ===")
+            print(result.result)
+            return result.result
+
+        print("\n⚠️ No output received from any attempt")
+
+        # Additional debugging information
+        print("\n📁 Final workspace check:")
+        workspace.process.exec("pwd", cwd=babyagi_path)
+        workspace.process.exec("ls -la", cwd=babyagi_path)
+
+    except Exception as e:
+        print(f"❌ Execution failed: {e}")
+        traceback.print_exc()
 
     return None
 
