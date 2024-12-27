@@ -1,6 +1,6 @@
 {
-  "name": "BabyAGI 2o Container",
-  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "name": "BabyAGI 2o Sandbox",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
   "forwardPorts": [
     8000
   ],
@@ -27,5 +27,5 @@
       ]
     }
   },
-  "postCreateCommand": "pip install litellm python-dotenv"
+  "postCreateCommand": "pip install litellm python-dotenv daytona-sdk"
 }

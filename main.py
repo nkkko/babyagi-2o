@@ -7,7 +7,6 @@ load_dotenv()
 
 LITELLM_MODEL = os.getenv('LITELLM_MODEL')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
 
 # ANSI escape codes for color and formatting
 class Colors:
@@ -15,7 +14,7 @@ class Colors:
     WARNING = '\033[93m'; FAIL = '\033[91m'; ENDC = '\033[0m'; BOLD = '\033[1m'; UNDERLINE = '\033[4m'
 
 # Configuration
-MODEL_NAME = os.environ.get('LITELLM_MODEL', 'anthropic/claude-3-5-sonnet-20240620')
+MODEL_NAME = os.environ.get('LITELLM_MODEL')
 tools, available_functions = [], {}
 MAX_TOOL_OUTPUT_LENGTH = 5000  # Adjust as needed
 
@@ -178,4 +177,15 @@ def run_main_loop(user_input):
     print(f"{Colors.WARNING}{Colors.BOLD}Max iterations reached or task completed.{Colors.ENDC}")
 
 if __name__ == "__main__":
-    run_main_loop(input(f"{Colors.BOLD}Describe the task you want to complete: {Colors.ENDC}"))
+    # Check if a prompt was provided as a command-line argument
+    if len(sys.argv) < 2:
+        print(f"{Colors.FAIL}Error: Please provide a prompt as a command-line argument{Colors.ENDC}")
+        print(f"Usage: python {sys.argv[0]} \"your prompt here\"")
+        sys.exit(1)
+
+    # Get the prompt from command-line arguments
+    # Join all arguments after the script name in case the prompt contains spaces
+    prompt = " ".join(sys.argv[1:])
+
+    # Run the main loop with the provided prompt
+    run_main_loop(prompt)
