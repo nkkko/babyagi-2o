@@ -54,39 +54,59 @@ def clone_repository_with_fallbacks(workspace):
     Clone repository with multiple path fallbacks.
     """
     potential_paths = [
-        "/tmp/babyagi",
-        f"/tmp/babyagi-{uuid.uuid4().hex[:8]}",
-        "/workspace/babyagi",
-        "~/babyagi"
+        "/tmp/babyagi"
     ]
 
     for path in potential_paths:
         try:
             print(f"🔄 Attempting to clone repository to {path}")
 
-            # Ensure path exists
+            # Clean up any existing directory
+            workspace.process.exec(f"rm -rf {path}")
             workspace.process.exec(f"mkdir -p {path}")
 
             # Clone repository
-            workspace.git.clone(
+            clone_result = workspace.git.clone(
                 url="https://github.com/nkkko/babyagi-2o.git",
                 path=path
             )
 
-            # Verify the clone
-            result = workspace.process.exec("ls -la", cwd=path)
-            if result and result.result and "main.py" in result.result:
-                print(f"✅ Successfully cloned to {path}")
-                return path
-            else:
-                print(f"⚠️ Clone seemed successful but main.py not found in {path}")
-                continue
+            # Verify the clone and copy files if needed
+            print("📋 Copying current directory contents to workspace...")
 
-        except Exception as clone_error:
-            print(f"❌ Clone failed to {path}: {clone_error}")
+            # List current directory contents
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            files_to_copy = ['main.py', 'requirements.txt']
+
+            for file in files_to_copy:
+                try:
+                    with open(os.path.join(current_dir, file), 'rb') as f:
+                        content = f.read()
+                        workspace.fs.upload_file(f"{path}/{file}", content)
+                        print(f"✅ Uploaded {file}")
+                except Exception as e:
+                    print(f"⚠️ Error copying {file}: {e}")
+
+            # Verify the files exist
+            result = workspace.process.exec("ls -la", cwd=path)
+            if result and result.result:
+                print(f"📁 Directory contents of {path}:")
+                print(result.result)
+
+                # Check if main.py exists
+                check_main = workspace.process.exec(f"ls -l main.py", cwd=path)
+                if check_main and check_main.result:
+                    print(f"✅ Successfully set up workspace at {path}")
+                    return path
+                else:
+                    print(f"⚠️ main.py not found in {path}")
+                    continue
+
+        except Exception as setup_error:
+            print(f"❌ Setup failed for {path}: {setup_error}")
             continue
 
-    raise RuntimeError("Could not clone repository to any path")
+    raise RuntimeError("Could not set up workspace in any path")
 
 def setup_environment(workspace, babyagi_path, user_input):
     """
@@ -223,24 +243,37 @@ def setup_babyagi_workspace(user_input: str):
         if not workspace:
             raise RuntimeError("Failed to create workspace")
 
-        # Clone repository
-        babyagi_path = clone_repository_with_fallbacks(workspace)
+        try:
+            # Set up workspace
+            babyagi_path = clone_repository_with_fallbacks(workspace)
+            if not babyagi_path:
+                raise RuntimeError("Failed to set up workspace directory")
 
-        # Setup environment
-        setup_environment(workspace, babyagi_path, user_input)
+            # Verify workspace setup
+            print("\n🔍 Verifying workspace setup:")
+            result = workspace.process.exec("ls -la", cwd=babyagi_path)
+            print(result.result if result and result.result else "No files found")
 
-        # Install dependencies
-        if not install_dependencies(workspace, babyagi_path):
-            raise RuntimeError("Failed to install dependencies")
+            # Setup environment
+            setup_environment(workspace, babyagi_path, user_input)
 
-        # Run BabyAGI
-        result = run_babyagi(workspace, babyagi_path, user_input)
+            # Install dependencies
+            if not install_dependencies(workspace, babyagi_path):
+                raise RuntimeError("Failed to install dependencies")
 
-        return {
-            "workspace": workspace,
-            "result": result,
-            "path": babyagi_path
-        }
+            # Run BabyAGI
+            result = run_babyagi(workspace, babyagi_path, user_input)
+
+            return {
+                "workspace": workspace,
+                "result": result,
+                "path": babyagi_path
+            }
+
+        except Exception as e:
+            print(f"❌ Error during workspace setup: {e}")
+            traceback.print_exc()
+            return None
 
     except Exception as e:
         comprehensive_error_logging(e, "Workspace Setup")
